@@ -1,0 +1,33 @@
+{
+  "name": "ag-agentmemory",
+  "version": "0.1.0",
+  "description": "Antigravity, Codex CLI, and Claude Code setup automation for AgentMemory",
+  "type": "module",
+  "bin": {
+    "agentmemory-ag": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "src/templates",
+    "setup.sh",
+    "README.vi.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/cli.ts",
+    "verify": "node dist/cli.js verify",
+    "status": "node dist/cli.js status",
+    "prepack": "npm run build"
+  },
+  "dependencies": {
+    "commander": "^12.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.17.32",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
