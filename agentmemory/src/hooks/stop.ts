@@ -43,8 +43,8 @@ async function main() {
     await fetch(`${REST_URL}/agentmemory/summarize`, {
       method: "POST",
       headers: authHeaders(),
-      body: JSON.stringify({ sessionId }),
-      signal: AbortSignal.timeout(120000), // Increased from 30s to 120s
+      body: JSON.stringify({ sessionId, async: true }),
+      signal: AbortSignal.timeout(5000), // 5s timeout is plenty for a background dispatch response
     });
   } catch {
     // summarize is best-effort

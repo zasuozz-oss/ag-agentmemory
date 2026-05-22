@@ -4,9 +4,9 @@
 
 Repo gốc AgentMemory: https://github.com/rohitg00/agentmemory
 
-Automation setup AgentMemory cho Antigravity, Codex CLI và Claude Code.
+Tự động hóa cài đặt AgentMemory cho Antigravity, Codex CLI và Claude Code trên macOS.
 
-Setup giữ `~/.agentmemory/.env` làm nguồn cấu hình chính, dùng local embedding model và bật automation qua proxy Antigravity CLI đã đăng nhập. API key là tùy chọn.
+`~/.agentmemory/.env` là nguồn cấu hình duy nhất. Embeddings chạy cục bộ. Các LLM call được định tuyến qua proxy Antigravity CLI đã đăng nhập. Không cần API key.
 
 ```env
 EMBEDDING_PROVIDER=local
@@ -23,7 +23,7 @@ OPENAI_MODEL=agy-cli
 
 ## Cài Nhanh
 
-Setup mặc định dùng cơ chế proxy qua Antigravity CLI đã đăng nhập, không cần API key:
+Setup mặc định — dùng proxy Antigravity CLI đã đăng nhập, không cần API key:
 
 ```bash
 bash setup.sh
@@ -33,28 +33,52 @@ Chỉ setup một client:
 
 ```bash
 bash setup.sh --client antigravity
+bash setup.sh --client codex
+bash setup.sh --client claude
 ```
 
-Bỏ qua sync upstream nếu muốn chạy nhanh:
+Bỏ qua sync upstream để chạy nhanh hơn:
 
 ```bash
 bash setup.sh --skip-upstream
 ```
 
+## macOS LaunchAgent (Khởi động tự động)
+
+`set-run.sh` đăng ký hai dịch vụ nền liên tục qua macOS LaunchAgents, giúp cả agy-proxy và AgentMemory server tự động khởi động khi đăng nhập và tự restart khi bị crash:
+
+```bash
+bash set-run.sh
+```
+
+Các dịch vụ được đăng ký:
+
+| Label | Port | Log |
+|---|---|---|
+| `com.agentmemory.agy-proxy` | 3129 | `~/.agentmemory/agy-proxy.log` |
+| `com.agentmemory.server` | 3111 / 3113 | `~/.agentmemory/server.log` |
+
+Kiểm tra trạng thái:
+
+```bash
+launchctl list | grep agentmemory
+```
+
 ## Agy Local Proxy
 
-`setup.sh` không patch AgentMemory upstream. Script start một OpenAI-compatible proxy local tại `http://127.0.0.1:3129`, rồi cấu hình AgentMemory dùng provider `openai` sẵn có để gọi proxy này. Proxy chuyển request sang `agy --print-timeout 120s -p "<prompt>"`.
+`setup.sh` không patch AgentMemory upstream. Script khởi động một proxy OpenAI-compatible cục bộ tại `http://127.0.0.1:3129`, sau đó cấu hình AgentMemory dùng provider `openai` sẵn có để trỏ vào proxy này. Proxy chuyển tiếp mỗi request sang `agy --print-timeout 120s -p "<prompt>"`.
 
 Yêu cầu và giới hạn:
 
 - Cần `agy` CLI đã đăng nhập, mặc định tại `~/.local/bin/agy`.
-- Mỗi LLM call spawn CLI nên chậm hơn API trực tiếp.
-- Embeddings vẫn là local.
+- `agy-clean-wrapper.sh` loại bỏ mã ANSI và ký tự điều khiển khỏi output của `agy` trước khi chuyển tiếp.
+- Mỗi LLM call spawn một tiến trình CLI — chậm hơn API trực tiếp.
+- Embeddings vẫn chạy cục bộ.
 - Hooks và automation dùng LLM được bật mặc định.
 
 ## Upstream Snapshot
 
-Mỗi lần setup, script sẽ clone hoặc pull upstream AgentMemory vào cache:
+Mỗi lần setup chạy, script clone hoặc pull AgentMemory upstream vào:
 
 ```text
 .agentmemory-upstream/
@@ -66,49 +90,57 @@ Sau đó sync sang working copy không có git metadata:
 agentmemory/
 ```
 
-Thư mục `agentmemory/` giữ snapshot local để vẫn đọc được docs, plugin, hooks và scripts nếu upstream GitHub bị xoá hoặc mạng lỗi. Nếu pull/clone lỗi nhưng `agentmemory/` đã tồn tại, setup vẫn tiếp tục dùng snapshot cũ.
+Thư mục `agentmemory/` giữ snapshot cục bộ để vẫn đọc được docs, plugin, hooks và scripts ngay cả khi repo upstream bị xóa hoặc mạng lỗi. Nếu pull/clone thất bại nhưng `agentmemory/` đã tồn tại, setup tiếp tục dùng snapshot cũ.
 
 ## AgentMemory Server
 
-Sau setup, chạy server:
+Sau setup, chạy server thủ công:
 
 ```bash
 npx -y @agentmemory/agentmemory@latest
 ```
 
-Viewer:
+Giao diện Viewer:
 
 ```text
 http://localhost:3113
 ```
 
-Health:
+Kiểm tra sức khỏe:
 
 ```bash
 curl -fsSL http://localhost:3111/agentmemory/health
 ```
 
-Trước khi `setup.sh` restart AgentMemory, script sẽ backup runtime state vào:
+Trước khi `setup.sh` restart AgentMemory, script backup runtime state vào:
 
 ```text
 ~/.agentmemory/backups/setup-<timestamp>/
 ```
 
-Backup gồm thư mục `data/` local nếu có, `~/.agentmemory/standalone.json`, và file env hiện tại.
+Backup bao gồm thư mục `data/` cục bộ (nếu có), `~/.agentmemory/standalone.json`, và file env hiện tại.
 
 ## Antigravity
 
-Antigravity chưa có upstream plugin AgentMemory, nên repo này tự setup:
+Antigravity chưa có upstream plugin AgentMemory. Repo này tự setup thủ công:
 
-- MCP: `~/.gemini/antigravity/mcp_config.json`
+- MCP config: `~/.gemini/antigravity/mcp_config.json`
 - Instructions: `~/.gemini/GEMINI.md`
 - Skills: `~/.gemini/antigravity/skills/`
 
-Setup dùng sentinel block để không xóa nội dung cũ trong `GEMINI.md`.
+Sentinel block ngăn ghi đè nội dung cũ trong `GEMINI.md`:
+
+```text
+<!-- AGENTMEMORY_RULES_START -->
+...
+<!-- AGENTMEMORY_RULES_END -->
+```
+
+Chạy lại `setup.sh` sẽ cập nhật block này và copy lại các skill đang hoạt động.
 
 ## Codex CLI
 
-Setup ghi MCP fallback trong:
+Setup ghi MCP fallback configuration vào:
 
 ```text
 ~/.codex/config.toml
@@ -118,11 +150,11 @@ Setup cũng cố gắng cài upstream AgentMemory plugin và chạy `agentmemory
 
 ## Claude Code
 
-Setup cố gắng cài upstream Claude Code plugin và connect AgentMemory hooks khi có sẵn CLI `claude` và `agentmemory`.
+Setup cố gắng cài upstream Claude Code plugin và connect AgentMemory hooks khi có sẵn cả hai CLI `claude` và `agentmemory`.
 
 ## CLI
 
-Sau khi build:
+Sau khi build (`npm run build`):
 
 ```bash
 node dist/cli.js setup --profile local --client all
@@ -134,26 +166,17 @@ node dist/cli.js status
 
 ## Custom Overlay
 
-Ghi đè templates bằng cách đặt file tương ứng trong:
+Ghi đè bất kỳ template nào bằng cách đặt file tương ứng vào:
 
 ```text
 custom/instructions/
 custom/skills/
 ```
 
-Setup copy template mặc định trước, sau đó overlay custom.
-
-Antigravity instructions được ghi vào `~/.gemini/GEMINI.md` bằng block:
-
-```text
-<!-- AGENTMEMORY_RULES_START -->
-...
-<!-- AGENTMEMORY_RULES_END -->
-```
-
-Chạy lại `setup.sh` sẽ cập nhật lại block này và copy lại skills vào `~/.gemini/antigravity/skills/`.
+Setup copy template mặc định trước, sau đó overlay file custom của bạn lên trên. Chạy lại `setup.sh` sẽ áp dụng lại overlay.
 
 ## Không Làm
 
 - Không fork AgentMemory upstream.
 - Không yêu cầu API key cho embeddings.
+- Không patch source code AgentMemory upstream.

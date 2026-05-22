@@ -1,4 +1,5 @@
 import type { ISdk, ApiRequest } from "iii-sdk";
+import { logger } from "../logger.js";
 import type { Session, CompressedObservation, HookPayload, CommitLink } from "../types.js";
 import { withKeyedLock } from "../state/keyed-mutex.js";
 import { KV } from "../state/schema.js";
@@ -594,10 +595,27 @@ export function registerApiTriggers(
   });
 
   sdk.registerFunction("api::summarize", 
-    async (req: ApiRequest<{ sessionId: string }>): Promise<Response> => {
+    async (req: ApiRequest<{ sessionId: string; async?: boolean }>): Promise<Response> => {
       const sessionId = asNonEmptyString((req.body as Record<string, unknown>)?.sessionId);
       if (!sessionId) {
         return { status_code: 400, body: { error: "sessionId is required" } };
+      }
+      const isAsync = !!(req.body as Record<string, unknown>)?.async;
+      if (isAsync) {
+        // Trigger summarize asynchronously in the background
+        sdk.trigger({
+          function_id: "mem::summarize",
+          payload: { sessionId },
+        }).catch((err) => {
+          logger.error("Background summarize failed", {
+            sessionId,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        });
+        return {
+          status_code: 202,
+          body: { success: true, status: "summarize_triggered_in_background" },
+        };
       }
       const result = await sdk.trigger({
         function_id: "mem::summarize",

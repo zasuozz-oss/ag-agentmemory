@@ -9,12 +9,27 @@ export type AgyRunOptions = {
   sandbox?: boolean;
 };
 
-let queue = Promise.resolve<unknown>(undefined);
+const MAX_CONCURRENCY = Number.parseInt(process.env.AGY_PROXY_CONCURRENCY || '3', 10);
+let active = 0;
+const waiting: Array<() => void> = [];
+
+async function acquireSlot(): Promise<void> {
+  if (active < MAX_CONCURRENCY) { active++; return; }
+  return new Promise((resolve) => waiting.push(resolve));
+}
+
+function releaseSlot(): void {
+  const next = waiting.shift();
+  if (next) { next(); } else { active--; }
+}
 
 export async function runAgyPrompt(prompt: string, options: AgyRunOptions = {}): Promise<string> {
-  const task = queue.then(() => runAgyPromptNow(prompt, options));
-  queue = task.catch(() => undefined);
-  return task;
+  await acquireSlot();
+  try {
+    return await runAgyPromptNow(prompt, options);
+  } finally {
+    releaseSlot();
+  }
 }
 
 async function runAgyPromptNow(prompt: string, options: AgyRunOptions): Promise<string> {
@@ -31,7 +46,8 @@ async function runAgyPromptNow(prompt: string, options: AgyRunOptions): Promise<
   args.push(prompt);
 
   return new Promise((resolve, reject) => {
-    const child = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    const cwd = process.env.AGY_PROXY_WORKDIR || '/private/tmp';
+  const child = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'], cwd });
     let stdout = '';
     let stderr = '';
     const timer = setTimeout(() => {
