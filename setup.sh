@@ -125,6 +125,22 @@ require_command() {
   command -v "$1" >/dev/null 2>&1 || err "Required command not found: $1"
 }
 
+# Resolve the agentmemory plugin install directory (ships 6 hook scripts + 8 skills).
+agentmemory_plugin_root() {
+  local npm_root
+  npm_root="$(npm root -g 2>/dev/null || echo '')"
+  local candidates=(
+    "${npm_root}/@agentmemory/agentmemory/plugin"
+    "/opt/homebrew/lib/node_modules/@agentmemory/agentmemory/plugin"
+    "/usr/local/lib/node_modules/@agentmemory/agentmemory/plugin"
+    "${HOME}/AppData/Roaming/npm/node_modules/@agentmemory/agentmemory/plugin"
+  )
+  for c in "${candidates[@]}"; do
+    if [[ -d "$c/scripts" ]]; then echo "$c"; return 0; fi
+  done
+  return 1
+}
+
 upsert_env_var() {
   local key="$1" value="$2" file="$3"
   mkdir -p "$(dirname "$file")"
@@ -273,50 +289,66 @@ setup_env() {
 # ─── Phase 2: Claude Code ─────────────────────────────────────────────────────
 
 install_claude_code() {
-  step "Claude Code: MCP + hooks"
+  step "Claude Code: MCP + 6 agentmemory hooks"
   require_command claude
+
+  local plugin_root
+  plugin_root="$(agentmemory_plugin_root)" || err "agentmemory plugin not found — install @agentmemory/agentmemory globally"
+  info "Plugin root: $plugin_root"
 
   info "Wiring agentmemory MCP into Claude Code"
   agentmemory connect claude-code ${FORCE} 2>&1 | grep -v "^$" || true
 
-  info "Merging agentmemory hooks into ~/.claude/settings.json"
-  merge_claude_hooks '{
-    "SessionStart": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "agentmemory status --no-interactive >/dev/null 2>&1 || (agentmemory >/dev/null 2>&1 &)"
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "agentmemory status --no-interactive >/dev/null 2>&1 || true"
-          }
-        ]
-      }
-    ]
-  }'
+  info "Merging 6 agentmemory hooks into ~/.claude/settings.json"
+  # Real hook scripts shipped by the agentmemory plugin:
+  #   session-start, prompt-submit, pre-tool-use, post-tool-use, pre-compact, stop
+  local hooks_json
+  hooks_json="$(node - "$plugin_root" <<'NODE'
+const root = process.argv[2];
+const cmd = (name) => `node "${root}/scripts/${name}.mjs"`;
+const config = {
+  SessionStart: [{ hooks: [{ type: "command", command: cmd("session-start"), statusMessage: "agentmemory: loading session context" }] }],
+  UserPromptSubmit: [{ hooks: [{ type: "command", command: cmd("prompt-submit"), statusMessage: "agentmemory: recalling relevant memories" }] }],
+  PreToolUse:  [{ matcher: "Edit|Write|Read|Glob|Grep", hooks: [{ type: "command", command: cmd("pre-tool-use") }] }],
+  PostToolUse: [{ hooks: [{ type: "command", command: cmd("post-tool-use") }] }],
+  PreCompact:  [{ hooks: [{ type: "command", command: cmd("pre-compact") }] }],
+  Stop:        [{ hooks: [{ type: "command", command: cmd("stop") }] }],
+};
+process.stdout.write(JSON.stringify(config));
+NODE
+)"
+  merge_claude_hooks "$hooks_json"
 
-  ok "Claude Code wired (restart Claude Code to pick up changes)"
+  ok "Claude Code wired with 6 hooks (restart Claude Code to pick up changes)"
 }
 
 # ─── Phase 3: Codex ───────────────────────────────────────────────────────────
 
 install_codex() {
-  step "Codex: MCP"
+  step "Codex: MCP + plugin (6 hooks via Codex plugin system)"
   require_command codex
+
+  local plugin_root
+  plugin_root="$(agentmemory_plugin_root)" || err "agentmemory plugin not found — install @agentmemory/agentmemory globally"
 
   info "Wiring agentmemory MCP into Codex"
   agentmemory connect codex ${FORCE} 2>&1 | grep -v "^$" || true
 
+  # Codex loads hooks via its plugin system. Register the agentmemory plugin
+  # directory as a local marketplace, then install the agentmemory plugin.
+  info "Registering agentmemory plugin marketplace: $plugin_root"
+  if codex plugin marketplace add "$plugin_root" 2>&1 | grep -v "^$"; then
+    info "Installing agentmemory plugin"
+    codex plugin add "agentmemory@agentmemory" 2>&1 | grep -v "^$" || \
+      warn "codex plugin add failed — open Codex TUI to install + trust the agentmemory plugin manually"
+  else
+    warn "codex plugin marketplace add failed — open Codex TUI to add the plugin manually:"
+    warn "  codex plugin marketplace add $plugin_root"
+    warn "  codex plugin add agentmemory@agentmemory"
+  fi
+
   ok "Codex MCP wired"
-  warn "Codex hooks require manual trust: open Codex TUI and accept all 6 agentmemory hooks when prompted"
+  warn "First TUI launch: Codex will prompt to trust the agentmemory plugin + its 6 hooks — accept all."
 }
 
 # ─── Phase 4: Antigravity ─────────────────────────────────────────────────────
