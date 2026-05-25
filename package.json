@@ -9,6 +9,9 @@
   "files": [
     "dist",
     "setup.sh",
+    "set-run.sh",
+    "agy-clean-wrapper.sh",
+    "README.md",
     "README.vi.md"
   ],
   "scripts": {

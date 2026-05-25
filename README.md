@@ -1,191 +1,187 @@
 # ag-agentmemmory-proxy
 
-[README](README.md) | [Tiếng Việt](README.vi.md)
+[English](README.md) | [Tiếng Việt](README.vi.md)
 
-`ag-agentmemmory-proxy` cung cấp một proxy cục bộ tương thích OpenAI cho `agy-cli`. Proxy chạy trên máy local, nhận request dạng OpenAI chat completions, rồi chuyển prompt sang `agy` CLI đã đăng nhập.
+A local OpenAI-compatible proxy for `agy-cli`. The proxy runs on your machine, accepts OpenAI chat completion requests, and forwards each prompt to the authenticated `agy` CLI.
 
-Nguồn AgentMemory upstream: https://github.com/rohitg00/agentmemory
+Upstream AgentMemory: https://github.com/rohitg00/agentmemory
 
-## Tổng Quan Setup
+## Setup Overview
 
-Thứ tự setup khuyến dùng:
+1. Install AgentMemory globally.
+2. Install the Claude Code plugin (hooks wired automatically).
+3. Install the Codex CLI plugin and trust hooks interactively.
+4. Run `bash setup.sh` — builds the proxy, registers agentmemory to start at login, and starts everything.
+5. Point AgentMemory upstream at the proxy endpoint if you want to use `agy-cli` as the LLM provider.
 
-1. Cài và chạy AgentMemory upstream.
-2. Cấu hình Claude Code.
-3. Cấu hình Codex CLI.
-4. Chạy proxy của repo này.
-5. Trỏ AgentMemory upstream về endpoint proxy nếu muốn dùng `agy-cli` làm LLM provider.
+## 1. Install AgentMemory
 
-## 1. Setup AgentMemory Upstream
-
-Cài AgentMemory CLI một lần:
+> **macOS + Homebrew node**: npm global requires sudo because Homebrew owns the `node_modules` directory.
 
 ```bash
-npm install -g @agentmemory/agentmemory
+sudo npm install -g @agentmemory/agentmemory
 ```
 
-Hoặc chạy bằng `npx`:
+Verify:
 
 ```bash
-npx -y @agentmemory/agentmemory@latest
-```
-
-Chạy memory server trong một terminal riêng:
-
-```bash
-agentmemory
-```
-
-Kiểm tra server:
-
-```bash
+agentmemory status
 curl -fsSL http://localhost:3111/agentmemory/health
 ```
 
-Viewer upstream:
+Viewer: `http://localhost:3113`
 
-```text
-http://localhost:3113
-```
-
-Lệnh hữu ích:
+Useful commands:
 
 ```bash
-agentmemory doctor
+agentmemory doctor   # diagnose and auto-fix issues
 agentmemory stop
-agentmemory remove
+agentmemory status
 ```
 
-## 2. Setup Claude Code
+## 2. Claude Code Setup (Plugin + 12 Hooks)
 
-Trong Claude Code, cài AgentMemory plugin:
+The Claude Code plugin automatically wires **12 hooks**: SessionStart, UserPromptSubmit, PreToolUse,
+PostToolUse, PostToolUseFailure, PreCompact, SubagentStart, SubagentStop, Notification,
+TaskCompleted, Stop, SessionEnd.
+
+Run these two commands inside Claude Code:
 
 ```text
 /plugin marketplace add rohitg00/agentmemory
 /plugin install agentmemory
 ```
 
-Plugin sẽ wire MCP server, hooks, và skills của AgentMemory cho Claude Code. Sau khi cài xong, restart Claude Code nếu tool hoặc plugin chưa hiển thị ngay.
+Restart Claude Code after installing. Hooks activate immediately — no further action needed.
 
-Kiểm tra:
+## 3. Codex CLI Setup (Plugin + 6 Hooks)
 
-```bash
-curl -fsSL http://localhost:3111/agentmemory/health
-agentmemory doctor
-```
+The Codex plugin wires **6 hooks**: session_start, user_prompt_submit, pre_tool_use, post_tool_use,
+pre_compact, stop.
 
-Nếu muốn wire hook/MCP bằng AgentMemory CLI:
-
-```bash
-agentmemory connect claude-code --with-hooks
-```
-
-Chạy lại command này sau mỗi lần upgrade AgentMemory nếu hook path thay đổi.
-
-## 3. Setup Codex CLI
-
-Cài AgentMemory plugin cho Codex CLI:
+**Step 1** — Install the plugin from a terminal:
 
 ```bash
 codex plugin marketplace add rohitg00/agentmemory
 codex plugin add agentmemory@agentmemory
 ```
 
-Plugin sẽ đăng ký MCP server, lifecycle hooks, và skills của AgentMemory cho Codex CLI.
-
-Kiểm tra:
+**Step 2** — Trust hooks inside the Codex TUI (required):
 
 ```bash
-curl -fsSL http://localhost:3111/agentmemory/health
-agentmemory doctor
+codex
 ```
 
-Nếu dùng Codex Desktop hoặc môi trường cần mirror hook vào user-scope:
+When Codex displays `"Trust this hook?"` for each hook, choose **Yes / Always trust**.
+All 6 hooks must be accepted. Afterwards `~/.codex/config.toml` will contain 6 entries:
+
+```toml
+[hooks.state."agentmemory@agentmemory:hooks/hooks.codex.json:session_start:0:0"]
+trusted_hash = "sha256:..."
+# ... (6 entries total)
+```
+
+Verify:
 
 ```bash
-agentmemory connect codex --with-hooks
+grep "hooks.state.*agentmemory" ~/.codex/config.toml | wc -l
+# must return 6
 ```
 
-Nếu chỉ cần MCP fallback cho Codex:
+> **Note**: If the plugin is removed and reinstalled, all `trusted_hash` entries are wiped.
+> Open the Codex TUI again and re-trust all 6 hooks.
 
-```bash
-codex mcp add agentmemory -- npx -y @agentmemory/mcp
-```
+## 4. Proxy Setup + Auto-Start
 
-## 4. Setup Proxy
+`setup.sh` does everything in one run:
 
-Proxy expose endpoint OpenAI-compatible ở `127.0.0.1:3129` và gọi `agy-clean-wrapper.sh` cho mỗi request.
+- Builds the proxy (`npm install` + `npm run build`)
+- Writes config to `~/.ag-agentmemmory-proxy/proxy.env`
+- Starts the agy proxy on `127.0.0.1:3129`
+- **Registers agentmemory server to start automatically at login**:
+  - **macOS**: creates LaunchAgent `com.agentmemory` (KeepAlive — restarts on crash)
+  - **Windows** (Git Bash / MSYS2): creates Task Scheduler task `AgentMemory` (ONLOGON)
 
 ```bash
 bash setup.sh
 ```
 
-Script sẽ:
-
-- chạy `npm install` và `npm run build`
-- ghi config proxy vào `~/.ag-agentmemmory-proxy/proxy.env`
-- start hoặc reuse `agy-proxy`
-- kiểm tra `http://127.0.0.1:3129/health`
-
-Nếu đã build sẵn:
+Options:
 
 ```bash
-bash setup.sh --skip-build
-```
-
-Tùy chọn:
-
-```bash
+bash setup.sh --skip-build                         # skip npm install/build
+bash setup.sh --skip-agentmemory-startup           # skip auto-start registration
+bash setup.sh --agentmemory-bin /path/to/binary    # specify binary manually
 bash setup.sh --agy-bin /path/to/agy-clean-wrapper.sh
 bash setup.sh --host 127.0.0.1 --port 3129
 bash setup.sh --timeout-ms 120000
 bash setup.sh --sandbox
 ```
 
-## 5. Trỏ AgentMemory Về Proxy
+Files created:
 
-Sau khi proxy chạy, cấu hình provider OpenAI-compatible của AgentMemory upstream trỏ về endpoint local:
+```text
+~/.ag-agentmemmory-proxy/proxy.env            # proxy config
+~/.ag-agentmemmory-proxy/agy-proxy.log        # agy proxy log
+~/.ag-agentmemmory-proxy/agentmemory.log      # agentmemory server log
+~/Library/LaunchAgents/com.agentmemory.plist  # macOS startup plist (auto-created)
+```
+
+### macOS — Manage LaunchAgent manually
+
+```bash
+# Stop
+launchctl unload ~/Library/LaunchAgents/com.agentmemory.plist
+
+# Restart
+launchctl load ~/Library/LaunchAgents/com.agentmemory.plist
+
+# View logs
+tail -f ~/.ag-agentmemmory-proxy/agentmemory.log
+```
+
+### Windows — Manage Task Scheduler manually
+
+```bash
+schtasks.exe /End    /TN AgentMemory          # stop
+schtasks.exe /Run    /TN AgentMemory          # start
+schtasks.exe /Delete /TN AgentMemory /F       # remove
+```
+
+### agy proxy LaunchAgent (macOS)
+
+To also auto-start the agy proxy at login:
+
+```bash
+bash set-run.sh
+```
+
+## 5. Point AgentMemory at the Proxy
+
+After the proxy is running, configure AgentMemory upstream to use the local endpoint as its LLM provider:
 
 ```env
 OPENAI_BASE_URL=http://127.0.0.1:3129
 OPENAI_MODEL=agy-cli
 ```
 
-Restart AgentMemory sau khi cập nhật config:
+Restart AgentMemory:
 
 ```bash
 agentmemory stop
 agentmemory
 ```
 
-## CLI Proxy
+## Proxy CLI
 
 ```bash
 npm run build
-node dist/cli.js setup
 node dist/cli.js agy-proxy --host 127.0.0.1 --port 3129
 node dist/cli.js status
 node dist/cli.js verify
 ```
 
-`setup` có thể nhận các option:
-
-```bash
-node dist/cli.js setup --host 127.0.0.1 --port 3129
-node dist/cli.js setup --agy-bin ./agy-clean-wrapper.sh --timeout-ms 120000
-node dist/cli.js setup --sandbox
-```
-
-## Config Proxy
-
-Setup ghi các file proxy tại:
-
-```text
-~/.ag-agentmemmory-proxy/proxy.env
-~/.ag-agentmemmory-proxy/agy-proxy.log
-```
-
-Ví dụ `proxy.env`:
+## Proxy Config
 
 ```env
 AGY_PROXY_HOST=127.0.0.1
@@ -195,28 +191,36 @@ AGY_CLI_TIMEOUT_MS=120000
 AGY_CLI_SANDBOX=false
 ```
 
-## LaunchAgent
-
-Để chạy proxy khi login trên macOS:
-
-```bash
-bash set-run.sh
-```
-
-Log:
-
-```text
-~/.ag-agentmemmory-proxy/agy-proxy.log
-```
-
 ## Health Check
 
 ```bash
+# AgentMemory server
+curl -fsSL http://localhost:3111/agentmemory/health
+
+# agy proxy
 curl -fsSL http://127.0.0.1:3129/health
+# {"ok":true,"service":"agy-proxy"}
 ```
 
-Kết quả hợp lệ:
+## Uninstall
 
-```json
-{"ok":true,"service":"agy-proxy"}
+```bash
+# Remove AgentMemory
+agentmemory remove
+rm -rf ~/.agentmemory
+sudo rm -rf /opt/homebrew/lib/node_modules/@agentmemory  # macOS Homebrew
+
+# Remove LaunchAgent (macOS)
+launchctl unload ~/Library/LaunchAgents/com.agentmemory.plist
+rm ~/Library/LaunchAgents/com.agentmemory.plist
+
+# Remove Task Scheduler task (Windows)
+schtasks.exe /Delete /TN AgentMemory /F
+
+# Remove Codex plugin
+codex plugin remove agentmemory@agentmemory
+codex plugin marketplace remove agentmemory
+
+# Remove Claude Code plugin (inside Claude Code)
+/plugin uninstall agentmemory
 ```

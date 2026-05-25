@@ -79,6 +79,10 @@ async function runAgyPromptNow(prompt: string, options: AgyRunOptions): Promise<
 
 function cleanAgyOutput(output: string): string {
   return output
-    .replace(/\u001b\[[0-9;]*m/g, '')
+    .replace(/\u001b\[[0-9;]*[a-zA-Z]/g, '') // all CSI sequences (color, cursor, erase, …)
+    .replace(/\u001b\][^\u001b]*(?:\u0007|\u001b\\)/g, '') // OSC sequences
+    .replace(/\u001b[^[\]]/g, '') // remaining lone ESC sequences
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '')
     .trim();
 }

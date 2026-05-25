@@ -18,3 +18,10 @@ logs/
 .vscode/
 *.swp
 *.swo
+
+# Runtime / session data
+.antigravitycli/
+docs/superpowers/
+
+# Claude Code session permissions (project-specific, not for sharing)
+.claude/settings.local.json
