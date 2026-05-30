@@ -566,6 +566,54 @@ JSON
     warn "  codex plugin add agentmemory@${marketplace_name}"
   fi
 
+  # Ensure hooks are enabled globally — Codex may default to hooks=false.
+  if [[ -f "$CODEX_CONFIG" ]]; then
+    if grep -qE '^hooks\s*=\s*false' "$CODEX_CONFIG"; then
+      if [[ "$OS" == "mac" ]]; then
+        sed -i '' 's/^hooks[[:space:]]*=[[:space:]]*false/hooks = true/' "$CODEX_CONFIG"
+      else
+        sed -i 's/^hooks[[:space:]]*=[[:space:]]*false/hooks = true/' "$CODEX_CONFIG"
+      fi
+      ok "Codex config: hooks = false → hooks = true"
+    elif ! grep -qE '^hooks\s*=' "$CODEX_CONFIG"; then
+      # No hooks key at all — inject under [features] block
+      node - "$CODEX_CONFIG" <<'NODE' || true
+const fs = require('node:fs');
+const target = process.argv[2];
+let text = '';
+try { text = fs.readFileSync(target, 'utf8'); } catch {}
+if (text.includes('[features]')) {
+  text = text.replace(/(\[features\][^\[]*?)(\n\[|\s*$)/s, (_, block, after) =>
+    block.trimEnd() + '\nhooks = true\n' + after
+  );
+} else {
+  text = text.trimEnd() + '\n\n[features]\nhooks = true\n';
+}
+fs.writeFileSync(target, text);
+NODE
+      ok "Codex config: injected hooks = true under [features]"
+    fi
+  fi
+
+  # Ensure plugin entry exists in config.toml so hooks are loaded without TUI install step.
+  if [[ -f "$CODEX_CONFIG" ]] && ! grep -q '"agentmemory@agentmemory-marketplace"' "$CODEX_CONFIG"; then
+    node - "$CODEX_CONFIG" <<'NODE' || true
+const fs = require('node:fs');
+const target = process.argv[2];
+let text = '';
+try { text = fs.readFileSync(target, 'utf8'); } catch {}
+const entry = '\n[plugins."agentmemory@agentmemory-marketplace"]\nenabled = true\n';
+// Insert before first [plugins.] block if present, else append.
+if (/^\[plugins\./m.test(text)) {
+  text = text.replace(/^(\[plugins\.)/m, entry.trimStart() + '\n$1');
+} else {
+  text = text.trimEnd() + entry;
+}
+fs.writeFileSync(target, text);
+NODE
+    ok "Codex config: added [plugins.\"agentmemory@agentmemory-marketplace\"] enabled = true"
+  fi
+
   install_codex_skills
   install_codex_instructions
 
@@ -914,7 +962,7 @@ setup_agentmemory_startup() {
       # at logon), so stop any daemon already on :3111 and start a fresh detached
       # one for this session — picking up the current env and iii-engine.
       local am_pid
-      am_pid="$(netstat -ano 2>/dev/null | grep -i 'LISTENING' | grep ':3111 ' | awk '{print $NF}' | head -1)"
+      am_pid="$(netstat -ano 2>/dev/null | grep -i 'LISTENING' | grep ':3111 ' | awk '{print $NF}' | head -1 || true)"
       [[ -n "$am_pid" ]] && taskkill.exe //F //PID "$am_pid" 2>/dev/null || true
       start_agentmemory_now
       sleep 2
@@ -1132,7 +1180,7 @@ stop_running_proxy() {
   case "$OS" in
     win)
       local p
-      p="$(netstat -ano 2>/dev/null | grep -i 'LISTENING' | grep ":${AGY_PORT} " | awk '{print $NF}' | head -1)"
+      p="$(netstat -ano 2>/dev/null | grep -i 'LISTENING' | grep ":${AGY_PORT} " | awk '{print $NF}' | head -1 || true)"
       [[ -n "$p" ]] && taskkill.exe //F //PID "$p" 2>/dev/null || true
       ;;
     *)
