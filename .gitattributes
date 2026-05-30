@@ -1,0 +1,4 @@
+# Shell scripts must stay LF so they run under bash on every platform
+# (Git Bash/MSYS on Windows mangles execution and here-doc bodies on CRLF).
+*.sh text eol=lf
+agy-clean-wrapper.sh text eol=lf

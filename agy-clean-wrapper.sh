@@ -45,8 +45,14 @@ cleanup() {
 
 trap 'cleanup; exit $EXIT_CODE' EXIT TERM INT
 
+# Resolve the real agy binary: explicit override → default install path → PATH.
+AGY_REAL_BIN="${AGY_REAL_BIN:-$HOME/.local/bin/agy}"
+if [[ ! -x "$AGY_REAL_BIN" ]] && command -v agy >/dev/null 2>&1; then
+  AGY_REAL_BIN="$(command -v agy)"
+fi
+
 # Chạy agy trong background để giữ PID (phục vụ kill khi cần)
-"${AGY_REAL_BIN:-$HOME/.local/bin/agy}" "$@" &
+"$AGY_REAL_BIN" "$@" &
 AGY_PID=$!
 wait "$AGY_PID"
 EXIT_CODE=$?

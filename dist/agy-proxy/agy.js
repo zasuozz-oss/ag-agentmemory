@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 const DEFAULT_TIMEOUT_MS = 120_000;
@@ -47,7 +48,7 @@ async function runAgyPromptNow(prompt, options) {
         args.push('--sandbox');
     args.push(prompt);
     return new Promise((resolve, reject) => {
-        const cwd = process.env.AGY_PROXY_WORKDIR || '/private/tmp';
+        const cwd = process.env.AGY_PROXY_WORKDIR || (process.platform === 'win32' ? os.tmpdir() : '/private/tmp');
         const child = spawn(agyBin, args, { stdio: ['ignore', 'pipe', 'pipe'], cwd });
         let stdout = '';
         let stderr = '';
